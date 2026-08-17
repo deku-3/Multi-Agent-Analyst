@@ -5,8 +5,8 @@ from typing import Any
 
 from langchain_core.documents import Document
 
-from config import OLIST_DB_PATH
-from vectorstore import olist_schema_store
+from src.config import OLIST_DB_PATH
+from src.vectorstore import olist_schema_store
 
 
 # =========================================================
