@@ -1,0 +1,22 @@
+# Environment / secrets
+.env
+
+# Python
+__pycache__/
+*.pyc
+
+# Local databases
+*.sqlite
+*.db
+
+# Vector database
+olist_chroma_db/
+
+# Dataset
+# data/olist/*.csv
+
+# Nested repository
+SQL_agent/
+
+# Editor
+.vscode/
