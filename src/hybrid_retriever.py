@@ -1,7 +1,7 @@
 from rank_bm25 import BM25Okapi
 from langchain_core.documents import Document
 
-from src.vectorstore import olist_schema_store
+from vectorstore import olist_schema_store
 
 
 # Load the same documents already stored in Chroma

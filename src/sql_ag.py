@@ -51,7 +51,7 @@ from vectorstore import olist_schema_store
 from config import OLIST_DB_PATH
 
 # Hybrid RAG 
-from src.hybrid_retriever import hybrid_retrieve
+from hybrid_retriever import hybrid_retrieve
 # ---------------------------------------------------------------
 # LANGFUSE
 # ---------------------------------------------------------------
