@@ -29,7 +29,7 @@ import re
 import sqlite3
 import threading
 from pathlib import Path
-
+from langfuse import get_client
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -1356,30 +1356,6 @@ def delete_conversation(
 
 if __name__ == "__main__":
 
-    ask(
-        "How many orders are there?"
-    )
-
-    ask(
-        "What is the total sales?"
-    )
-
-    ask(
-        "How many unique customers are there?"
-    )
-
-    ask(
-        "Which payment types are used?"
-    )
-
-    ask(
-        "Which product categories have the most sales?"
-    )
-
-    ask(
-        "why " * 400
-    )
-
-    from langfuse import get_client
+    ask("Why did sales drop last quarter?")
 
     get_client().flush()
