@@ -50,7 +50,8 @@ from vectorstore import olist_schema_store
 # Olist database
 from config import OLIST_DB_PATH
 
-
+# Hybrid RAG 
+from src.hybrid_retriever import hybrid_retrieve
 # ---------------------------------------------------------------
 # LANGFUSE
 # ---------------------------------------------------------------
@@ -341,13 +342,11 @@ def retrieve(state: AgentState):
     disambiguation is necessary.
     """
 
-    print(
-        "--- Retrieving Olist schema ---"
-    )
-
     question = state["question"]
 
-    docs = olist_schema_store.similarity_search(
+    print("--- Hybrid Olist retrieval ---")
+
+    docs = hybrid_retrieve(
         question,
         k=5,
     )
