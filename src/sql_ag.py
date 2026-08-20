@@ -349,7 +349,7 @@ def retrieve(state: AgentState):
 
     docs = olist_schema_store.similarity_search(
         question,
-        k=4,
+        k=5,
     )
 
     if not docs:
