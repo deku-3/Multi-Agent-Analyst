@@ -1,7 +1,9 @@
 from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, Field
 from typing import Literal, Any
+from dotenv import load_dotenv
 
+load_dotenv()
 from src.planner_models import (
     InvestigationState,
     PlannerAction,
