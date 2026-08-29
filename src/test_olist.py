@@ -3,14 +3,23 @@ from src.planner import plan_next
 
 
 QUESTIONS = [
+    # Clear
     "Which product categories generated the most sales?",
     "Which states have the highest number of orders?",
+
+    # Ambiguous but probably answerable with a sensible default
     "How has the average order value changed over time?",
-    "Which sellers have the worst delivery performance?",
-    "Did payment method usage change over time?",
     "Are customers making repeat purchases?",
-    "Which product categories have low review scores but high sales?",
+    "Did payment method usage change over time?",
+
+    # Should require clarification
+    "How did sales change in Q3?",
+    "Compare sales last quarter.",
+    "Which sellers performed worst?",
+
+    # Complex analytical questions
     "Why did sales decline?",
+    "Which product categories have low review scores but high sales?",
 ]
 
 

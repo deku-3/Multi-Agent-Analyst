@@ -1,14 +1,14 @@
-from langchain_openai import ChatOpenAI
-from pydantic import BaseModel, Field
-from typing import Literal, Any
-from dotenv import load_dotenv
+from datetime import datetime
 
-load_dotenv()
+from dotenv import load_dotenv
+from langchain_openai import ChatOpenAI
+
 from src.planner_models import (
     InvestigationState,
     PlannerAction,
 )
 
+load_dotenv()
 
 llm = ChatOpenAI(
     model="gpt-4o-mini",
@@ -19,29 +19,25 @@ llm = ChatOpenAI(
 PLANNER_PROMPT = """
 You are the investigation planner for an AI data analyst.
 
-Your job is NOT to write SQL.
+Your job is to decide the SINGLE most useful next action needed
+to answer the user's question.
 
-Your job is to decide the single most useful next analytical
-step needed to answer the user's question.
+You do NOT write SQL.
+An SQL Worker handles concrete database questions.
 
-The database is the Olist Brazilian e-commerce dataset.
+CURRENT DATE/TIME:
+{current_datetime}
 
-You have an SQL Worker available. The SQL Worker can answer
-one concrete analytical subquestion against the database.
+DATASET CONTEXT:
+{dataset_context}
 
-CURRENT INVESTIGATION:
-
-User question:
+USER QUESTION:
 {question}
 
-Task type:
-{task_type}
-
-Objective:
-{objective}
-
-Context:
-{context}
+CURRENT INVESTIGATION STATE:
+Task type: {task_type}
+Objective: {objective}
+Context: {context}
 
 Observations:
 {observations}
@@ -58,43 +54,63 @@ Completed steps:
 Pending questions:
 {pending_questions}
 
-Budget:
-Queries remaining: {queries_remaining}
-
 RULES:
 
-1. Do not write SQL.
-2. Produce exactly ONE next action.
-3. The subquestion must be concrete enough for the SQL worker.
-4. Use existing observations before requesting new information.
-5. Do not repeat completed investigations.
-6. Prefer the investigation with the highest expected information gain.
-7. Do not claim causality without evidence.
-8. If enough evidence exists to answer the user's question,
-   choose "synthesize".
-9. If no useful investigation remains, choose "stop".
+1. Use existing evidence before requesting new information.
 
-10. When the investigation has NO observations yet:
-    - First establish the relevant comparison period or baseline.
-    - Verify the premise of the user's question.
-    - Do not immediately drill into a specific dimension or cause.
+2. Do not invent facts, metrics, dates, thresholds, or results.
 
-11. For root-cause questions such as:
-    "Why did sales drop?"
-    "Why did orders decline?"
-    "What caused the change?"
-    
-    Follow this general investigation progression:
-    a. Establish the change.
-    b. Decompose the change into major drivers.
-    c. Localize the dominant driver.
-    d. Investigate explanatory signals.
-    e. Synthesize when sufficiently explained.
+3. Use system-defined metric definitions and dataset rules when available.
 
-12. Do not assume a specific dimension such as category,
-    state, seller, payment type, or delivery is the cause
-    before evidence supports investigating it.
+4. Ask for clarification ONLY when missing information materially
+   changes the answer and cannot be resolved deterministically.
+
+5. Do not ask the user how to investigate a root-cause question.
+   You decide the investigation strategy.
+
+6. For root-cause questions:
+   establish the change → identify drivers → localize drivers
+   → investigate relevant explanatory signals → synthesize.
+
+7. Do not assume a particular cause or dimension before evidence
+   supports it.
+
+8. Do not repeat completed investigations.
+
+9. If one direct investigation can answer the question, prefer that
+   instead of creating unnecessary steps.
+
+10. If enough evidence exists, choose "synthesize".
+
+11. If the question cannot be answered reliably with the available
+    data, choose "stop".
+
+12. If clarification is required, ask exactly ONE concise question.
+
+Return exactly one action.
 """
+
+
+def build_dataset_context() -> dict:
+    return {
+        "name": "Olist Brazilian E-Commerce",
+        "date_min": "2016-09-04",
+        "date_max": "2018-10-17",
+        "partial_periods": [
+            "2016-09",
+            "2018-10",
+        ],
+        "defaults": {
+            "sales": "delivered GMV = SUM(order_items.price)",
+            "orders": "COUNT(DISTINCT orders.order_id)",
+            "unique_customers": (
+                "COUNT(DISTINCT customers.customer_unique_id)"
+            ),
+            "aov": "delivered GMV / delivered orders",
+            "freight": "SUM(order_items.freight_value)",
+            "sales_date": "orders.order_purchase_timestamp",
+        },
+    }
 
 
 def plan_next(
@@ -102,7 +118,15 @@ def plan_next(
     queries_remaining: int,
 ) -> PlannerAction:
 
+    current_datetime = (
+        datetime.now().astimezone().isoformat()
+    )
+
+    dataset_context = build_dataset_context()
+
     prompt = PLANNER_PROMPT.format(
+        current_datetime=current_datetime,
+        dataset_context=dataset_context,
         question=state.question,
         task_type=state.task_type,
         objective=state.objective,
@@ -112,13 +136,14 @@ def plan_next(
         evidence=state.evidence,
         completed_steps=state.completed_steps,
         pending_questions=state.pending_questions,
-        queries_remaining=queries_remaining,
     )
 
-    result = (
+    prompt += (
+        f"\n\nQUERIES REMAINING: {queries_remaining}"
+    )
+
+    return (
         llm
         .with_structured_output(PlannerAction)
         .invoke(prompt)
     )
-
-    return result
