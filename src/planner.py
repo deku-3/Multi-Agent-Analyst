@@ -73,6 +73,27 @@ RULES:
 8. If enough evidence exists to answer the user's question,
    choose "synthesize".
 9. If no useful investigation remains, choose "stop".
+
+10. When the investigation has NO observations yet:
+    - First establish the relevant comparison period or baseline.
+    - Verify the premise of the user's question.
+    - Do not immediately drill into a specific dimension or cause.
+
+11. For root-cause questions such as:
+    "Why did sales drop?"
+    "Why did orders decline?"
+    "What caused the change?"
+    
+    Follow this general investigation progression:
+    a. Establish the change.
+    b. Decompose the change into major drivers.
+    c. Localize the dominant driver.
+    d. Investigate explanatory signals.
+    e. Synthesize when sufficiently explained.
+
+12. Do not assume a specific dimension such as category,
+    state, seller, payment type, or delivery is the cause
+    before evidence supports investigating it.
 """
 
 
