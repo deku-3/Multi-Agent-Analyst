@@ -33,6 +33,12 @@ class InvestigationState(BaseModel):
         default_factory=list
     )
 
+    # Answers the user gave to clarification questions. Treated as
+    # USER-SPECIFIED (highest priority) on subsequent planning turns.
+    resolved_ambiguities: dict[str, Any] = Field(
+        default_factory=dict
+    )
+
     status: Literal[
         "planning",
         "investigating",
@@ -62,6 +68,13 @@ class PlannerAction(BaseModel):
     rationale: str = ""
 
     clarification_question: str = ""
+
+    # Optional concrete choices for a clarify action (rendered as buttons).
+    # Strongest when populated from discovered data (the data-informed
+    # clarify pattern), but may be offered on a cold clarify too.
+    clarification_options: list[str] = Field(
+        default_factory=list
+    )
 
     assumptions: list[str] = Field(
         default_factory=list
@@ -96,5 +109,9 @@ class PlannerAction(BaseModel):
         else:  # synthesize | stop
             self.subquestion = ""
             self.clarification_question = ""
+            self.clarification_options = []
+
+        if self.action == "investigate":
+            self.clarification_options = []
 
         return self

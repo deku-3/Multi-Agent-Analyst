@@ -45,13 +45,13 @@ from langgraph.graph import StateGraph, MessagesState, END
 from langfuse.langchain import CallbackHandler
 
 # Olist retrieval
-from vectorstore import olist_schema_store
+from src.vectorstore import olist_schema_store
 
 # Olist database
-from config import OLIST_DB_PATH
+from src.config import OLIST_DB_PATH
 
 # Hybrid RAG 
-from hybrid_retriever import hybrid_retrieve
+from src.hybrid_retriever import hybrid_retrieve
 # ---------------------------------------------------------------
 # LANGFUSE
 # ---------------------------------------------------------------

@@ -10,15 +10,34 @@ PARTIAL_PERIODS = [
     "2018-10",
 ]
 
+# NOTE: population filter (order_status = 'delivered') is stated
+# explicitly here so the planner's definition cannot drift from the
+# SQL Worker's. This is a stopgap until a single shared semantic
+# module is consumed by both components.
 METRIC_DEFINITIONS = {
-    "sales": "Delivered GMV = SUM(order_items.price)",
-    "gmv": "Delivered GMV = SUM(order_items.price)",
-    "orders": "COUNT(DISTINCT orders.order_id)",
+    "sales": (
+        "Delivered GMV = SUM(order_items.price) "
+        "over orders WHERE order_status = 'delivered'"
+    ),
+    "gmv": (
+        "Delivered GMV = SUM(order_items.price) "
+        "over orders WHERE order_status = 'delivered'"
+    ),
+    "orders": (
+        "COUNT(DISTINCT orders.order_id) "
+        "(delivered orders for sales-related counts)"
+    ),
     "unique_customers": (
         "COUNT(DISTINCT customers.customer_unique_id)"
     ),
-    "aov": "Delivered GMV / delivered orders",
-    "freight": "SUM(order_items.freight_value)",
+    "aov": (
+        "Delivered GMV / delivered order count "
+        "(both over order_status = 'delivered')"
+    ),
+    "freight": (
+        "SUM(order_items.freight_value); "
+        "separate from GMV, not part of sales"
+    ),
 }
 
 SALES_DATE = "orders.order_purchase_timestamp"

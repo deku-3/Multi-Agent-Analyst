@@ -294,6 +294,36 @@ Only claim a cause when the evidence supports it.
 Correlation alone does not establish causation.
 
 ==================================================
+PARTIAL-PERIOD GUARD (decline / drop diagnosis)
+==================================================
+
+The dataset boundaries are incomplete data-capture windows,
+listed in dataset.partial_periods. The first period is sparse
+and the last period is truncated (data collection stops
+mid-period, not because the business stopped).
+
+Therefore, before attributing any decline, drop, or fall to a
+business cause:
+
+1. Check whether the decline coincides with a period in
+   dataset.partial_periods (especially the LAST period).
+
+2. A fall in a partial period is most likely a DATA CUTOFF
+   ARTIFACT, not a real business decline.
+
+3. If the decline is concentrated in a partial period, do NOT
+   hunt for a driver. Instead:
+   - exclude the partial period(s) and re-establish whether a
+     real decline remains among complete periods, OR
+   - report explicitly that the apparent decline is a
+     data-boundary artifact rather than a business event.
+
+Never diagnose a category, seller, region, or other driver as
+the cause of a decline that is actually a partial-period
+artifact. Fabricating a cause for a data artifact is a
+critical failure.
+
+==================================================
 NEXT-ACTION QUALITY
 ==================================================
 
@@ -311,10 +341,25 @@ not a vague instruction such as:
 "analyze the data."
 
 Do not embed undefined thresholds in a subquestion
-("below a certain threshold", "above a certain amount").
-Either define the threshold from a system rule, discover it
-from the data first, or clarify it. A subquestion the worker
-cannot execute deterministically is not acceptable.
+("below a certain threshold", "above a certain amount") and
+NEVER invent a bare cutoff number (e.g. "review score below 3").
+
+When the user uses a subjective qualifier that has no system
+definition and no user-provided value ("low", "high", "poor",
+"strong", "best", "worst"):
+
+- If the qualifier can be made data-relative, DISCOVER the cutoff
+  from the data distribution rather than inventing it. Use an
+  explicit convention - default to quartiles (bottom quartile =
+  "low", top quartile = "high") - and state that convention as an
+  assumption. This usually means a first investigation to get the
+  distribution, then a second that applies the discovered cutoffs.
+
+- Only fall back to CLARIFY if the qualifier cannot be made
+  data-relative and materially changes the answer.
+
+A subquestion the worker cannot execute deterministically is not
+acceptable.
 
 ==================================================
 STOPPING
@@ -354,7 +399,13 @@ For CLARIFY:
     - objective
     - rationale
     - exactly ONE clarification_question
+    - clarification_options: concrete choices when they exist
+      (especially values discovered from the data); may be empty
     - leave subquestion empty
+
+Before clarifying, check resolved_ambiguities in the state: if the
+user has already answered this, treat it as USER-SPECIFIED and do
+NOT ask again.
 
 For SYNTHESIZE:
     provide:
@@ -417,6 +468,7 @@ def plan_next(
         "evidence": state.evidence,
         "completed_steps": state.completed_steps,
         "pending_questions": state.pending_questions,
+        "resolved_ambiguities": state.resolved_ambiguities,
         "status": state.status,
     }
 
