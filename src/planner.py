@@ -1,7 +1,8 @@
+import json
+
 from dotenv import load_dotenv
 from langchain_openai import ChatOpenAI
 
-import json
 from src.context_resolver import build_runtime_context
 from src.planner_models import (
     InvestigationState,
@@ -33,10 +34,8 @@ Your responsibility is to determine what should happen next.
 INPUT
 ==================================================
 
-CURRENT DATE/TIME:
-{current_datetime}
-
-DATASET CONTEXT:
+DATASET CONTEXT (includes current_datetime, dataset date range,
+partial periods, and metric definitions):
 {runtime_context}
 
 USER QUESTION:
@@ -156,6 +155,29 @@ CORE REASONING PRINCIPLES
 10. Never repeat an investigation whose answer is already known.
 
 ==================================================
+RELATIVE PERIOD RESOLUTION
+==================================================
+
+The dataset is HISTORICAL. The current date is far more recent
+than the newest data.
+
+Any relative time expression - "last quarter", "last month",
+"recently", "last year", "this year", "the latest period" -
+resolves against dataset.max_date, NOT against the current date.
+
+Treat dataset.max_date as the reference "now" for all relative
+time expressions.
+
+Never resolve a relative period to a range that falls outside
+[dataset.min_date, dataset.max_date]. If a requested relative
+period would fall entirely outside the dataset range, that is a
+reason to clarify or stop - not a reason to query an empty window.
+
+Also account for partial_periods: the first and last periods in
+the dataset may be incomplete calendar months and are not
+directly comparable to full months.
+
+==================================================
 INVESTIGATION STRATEGY
 ==================================================
 
@@ -223,18 +245,19 @@ Examples:
     Investigate it.
 
 "How did sales change in Q3?"
-    If the year cannot be determined from the context,
-    the year is UNKNOWN.
-    Clarify.
+    The year is not specified and cannot be resolved from a
+    relative expression. If the dataset spans multiple years,
+    the year is UNKNOWN and materially changes the answer.
+    Clarify which year, rather than silently answering for all
+    years.
 
 "Compare sales last quarter."
-    If the relative period can be deterministically resolved
-    from current date, dataset range, and period rules,
-    investigate it.
+    "last quarter" is relative. Resolve it against
+    dataset.max_date (NOT the current date) and investigate it.
 
 "Which sellers performed worst?"
-    If "worst" could reasonably refer to several different
-    metrics and no system definition exists, clarify.
+    "worst" could reasonably refer to several different
+    metrics and no system definition exists. Clarify.
 
 ==================================================
 ROOT-CAUSE REASONING
@@ -287,6 +310,12 @@ The SQL Worker should receive a concrete analytical question,
 not a vague instruction such as:
 "analyze the data."
 
+Do not embed undefined thresholds in a subquestion
+("below a certain threshold", "above a certain amount").
+Either define the threshold from a system rule, discover it
+from the data first, or clarify it. A subquestion the worker
+cannot execute deterministically is not acceptable.
+
 ==================================================
 STOPPING
 ==================================================
@@ -317,6 +346,7 @@ For INVESTIGATE:
     - subquestion
     - rationale
     - assumptions
+    - leave clarification_question empty
 
 For CLARIFY:
     provide:
@@ -324,6 +354,7 @@ For CLARIFY:
     - objective
     - rationale
     - exactly ONE clarification_question
+    - leave subquestion empty
 
 For SYNTHESIZE:
     provide:
@@ -337,9 +368,29 @@ For STOP:
     - objective
     - rationale
 
-Assumptions must contain only genuine analytical assumptions.
-Do not include generic statements such as:
-"The dataset contains sufficient information."
+==================================================
+ASSUMPTIONS - STRICT RULES
+==================================================
+
+An assumption records a genuine analytical CHOICE you made that
+a reasonable analyst could have made differently.
+
+GOOD assumptions (record a real choice):
+- "Treated Q3 as July-September."
+- "Resolved 'last quarter' as Q3 2018 relative to dataset.max_date."
+- "Used delivered GMV (SUM order_items.price on delivered orders),
+   not payment value."
+
+BANNED assumptions (data-availability guesses / platitudes):
+- "The dataset contains category information."
+- "The dataset includes state information for each order."
+- "Sales data is accurately recorded."
+- "The dataset contains sufficient information."
+
+If an assumption is about whether some data EXISTS, delete it.
+Whether the data exists is the SQL Worker's job to discover, not
+yours to assume. Return an empty assumptions list rather than
+filling it with platitudes.
 
 The planner must never fabricate evidence or results.
 """
@@ -352,6 +403,11 @@ def plan_next(
 
     runtime_context = build_runtime_context()
 
+    # Fix: give the template exactly the placeholders it declares.
+    # current_datetime already lives inside runtime_context, so the
+    # separate placeholder is gone. State fields are serialized into a
+    # single explicit `state` object so the prompt/caller contract is
+    # one obvious thing.
     state_view = {
         "task_type": state.task_type,
         "objective": state.objective,
@@ -365,9 +421,17 @@ def plan_next(
     }
 
     prompt = PLANNER_PROMPT.format(
-        runtime_context=json.dumps(runtime_context, indent=2, default=str),
+        runtime_context=json.dumps(
+            runtime_context,
+            indent=2,
+            default=str,
+        ),
         question=state.question,
-        state=json.dumps(state_view, indent=2, default=str),
+        state=json.dumps(
+            state_view,
+            indent=2,
+            default=str,
+        ),
         queries_remaining=queries_remaining,
     )
 
