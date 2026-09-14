@@ -4,7 +4,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-from src.configconfig import OLIST_PERSIST_DIR
+from src.config import OLIST_PERSIST_DIR
 
 
 embeddings = OpenAIEmbeddings(

@@ -161,21 +161,27 @@ RELATIVE PERIOD RESOLUTION
 The dataset is HISTORICAL. The current date is far more recent
 than the newest data.
 
+The dataset's timestamp range extends to dataset.max_date, but order
+collection effectively STOPS earlier, at dataset.effective_max_date
+(the last genuinely complete period is dataset.last_complete_period).
+The months between effective_max_date and max_date are near-empty
+trailing noise, listed in dataset.partial_periods.
+
 Any relative time expression - "last quarter", "last month",
 "recently", "last year", "this year", "the latest period" -
-resolves against dataset.max_date, NOT against the current date.
+resolves against dataset.effective_max_date (NOT the current date,
+and NOT the trailing dataset.max_date).
 
-Treat dataset.max_date as the reference "now" for all relative
-time expressions.
+Treat dataset.effective_max_date as the reference "now" for all
+relative time expressions. For example, "last month" means
+dataset.last_complete_period, not the near-empty final calendar
+month.
 
 Never resolve a relative period to a range that falls outside
-[dataset.min_date, dataset.max_date]. If a requested relative
-period would fall entirely outside the dataset range, that is a
-reason to clarify or stop - not a reason to query an empty window.
-
-Also account for partial_periods: the first and last periods in
-the dataset may be incomplete calendar months and are not
-directly comparable to full months.
+[dataset.min_date, dataset.effective_max_date]. If a requested
+relative period would fall in a partial/near-empty period, that is
+a reason to clarify or stop - not a reason to query a near-empty
+window.
 
 ==================================================
 INVESTIGATION STRATEGY
@@ -306,17 +312,30 @@ Therefore, before attributing any decline, drop, or fall to a
 business cause:
 
 1. Check whether the decline coincides with a period in
-   dataset.partial_periods (especially the LAST period).
+   dataset.partial_periods (especially near dataset.max_date).
 
 2. A fall in a partial period is most likely a DATA CUTOFF
    ARTIFACT, not a real business decline.
 
-3. If the decline is concentrated in a partial period, do NOT
+3. VERIFY the artifact - do not conclude it from the metric alone.
+   A GMV sum cannot distinguish "business declined" from "data
+   stopped" from "orders not yet delivered". To tell them apart,
+   investigate:
+     - ORDER COUNT by period (a real decline shows fewer sales;
+       a data cutoff shows order volume collapsing to near zero),
+     - and, when relevant, the ORDER STATUS composition of the
+       tail periods (a delivery-lag artifact shows many non-
+       delivered orders; a data cutoff shows almost no orders of
+       any status).
+   These distinguish the three explanations. Reasoning from a
+   single metric (e.g. delivered GMV) is not enough.
+
+4. If the decline is concentrated in a partial period, do NOT
    hunt for a driver. Instead:
    - exclude the partial period(s) and re-establish whether a
      real decline remains among complete periods, OR
    - report explicitly that the apparent decline is a
-     data-boundary artifact rather than a business event.
+     data-boundary artifact, backed by the order-count evidence.
 
 Never diagnose a category, seller, region, or other driver as
 the cause of a decline that is actually a partial-period
