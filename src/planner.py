@@ -1,6 +1,7 @@
 from dotenv import load_dotenv
 from langchain_openai import ChatOpenAI
 
+import json
 from src.context_resolver import build_runtime_context
 from src.planner_models import (
     InvestigationState,
@@ -351,17 +352,22 @@ def plan_next(
 
     runtime_context = build_runtime_context()
 
+    state_view = {
+        "task_type": state.task_type,
+        "objective": state.objective,
+        "context": state.context,
+        "observations": state.observations,
+        "hypotheses": state.hypotheses,
+        "evidence": state.evidence,
+        "completed_steps": state.completed_steps,
+        "pending_questions": state.pending_questions,
+        "status": state.status,
+    }
+
     prompt = PLANNER_PROMPT.format(
-        runtime_context=runtime_context,
+        runtime_context=json.dumps(runtime_context, indent=2, default=str),
         question=state.question,
-        task_type=state.task_type,
-        objective=state.objective,
-        context=state.context,
-        observations=state.observations,
-        hypotheses=state.hypotheses,
-        evidence=state.evidence,
-        completed_steps=state.completed_steps,
-        pending_questions=state.pending_questions,
+        state=json.dumps(state_view, indent=2, default=str),
         queries_remaining=queries_remaining,
     )
 
