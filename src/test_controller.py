@@ -173,3 +173,64 @@ print("\n" + "=" * 50)
 print(f"{passed}/{len(results)} checks passed")
 if passed != len(results):
     raise SystemExit(1)
+
+
+# --------------------------- on_event tests ---------------------------
+# These prove the event hook that the frontend's live step feed depends
+# on: events fire in the right order, carry the right data, and a
+# broken/raising on_event NEVER crashes the investigation.
+
+events_log = []
+
+def collect(event):
+    events_log.append(event)
+
+planner = ScriptedPlanner([
+    FakeAction("investigate", subquestion="monthly GMV trend", objective="trend"),
+    FakeAction("synthesize", objective="answer"),
+])
+budget = InvestigationBudget(max_queries=10)
+worker = FakeWorker()
+r = run_investigation(FakeState("why did sales decline?"), worker, budget,
+                      planner=planner, synthesizer=fake_synth, on_event=collect)
+
+types = [e["type"] for e in events_log]
+check("events: investigation_started first", types[0] == "investigation_started")
+check("events: investigate_start before evidence", types.index("investigate_start") < types.index("evidence"))
+check("events: evidence carries subquestion", events_log[types.index("evidence")]["subquestion"] == "monthly GMV trend")
+check("events: synthesizing before complete", types.index("synthesizing") < types.index("complete"))
+check("events: complete carries answer", events_log[-1]["answer"] == "FINAL[1 evidence]")
+
+# A raising on_event must never crash the investigation.
+def bad_event(event):
+    raise RuntimeError("frontend blew up")
+
+planner = ScriptedPlanner([
+    FakeAction("investigate", subquestion="q1", objective="o"),
+    FakeAction("synthesize", objective="answer"),
+])
+budget = InvestigationBudget(max_queries=10)
+worker = FakeWorker()
+r = run_investigation(FakeState("q"), worker, budget,
+                      planner=planner, synthesizer=fake_synth, on_event=bad_event)
+check("events: raising on_event does not crash investigation", r.status == "complete")
+
+# Clarify event carries the options (what the frontend renders as buttons).
+planner = ScriptedPlanner([
+    FakeAction("clarify", clarification_question="Which year?",
+               clarification_options=["2017", "2018"], objective="year"),
+])
+budget = InvestigationBudget(max_queries=10, max_clarifications=1)
+worker = FakeWorker()
+events_log2 = []
+r = run_investigation(FakeState("q"), worker, budget,
+                      planner=planner, synthesizer=fake_synth, on_event=events_log2.append)
+clarify_events = [e for e in events_log2 if e["type"] == "clarify"]
+check("events: clarify event fired", len(clarify_events) == 1)
+check("events: clarify event carries options", clarify_events[0]["options"] == ["2017", "2018"])
+
+
+passed = sum(1 for _, c in results if c)
+print(f"\n{'='*50}\n{passed}/{len(results)} checks passed (incl. on_event tests)")
+if passed != len(results):
+    raise SystemExit(1)
