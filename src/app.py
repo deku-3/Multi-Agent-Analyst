@@ -59,6 +59,7 @@ from src.budget import InvestigationBudget
 from src.worker_interface import SqlAgWorker
 from src.controller import run_investigation, resume_with_clarification
 from src.session_store import session_store
+from src.followup_resolver import resolve_followup
 
 
 def _format_event(event: dict) -> "str | None":
@@ -82,6 +83,8 @@ def _format_event(event: dict) -> "str | None":
         return f"📊 Querying: {event['subquestion']}"
     if t == "duplicate_skipped":
         return f"↩️ Already answered, skipping: {event['subquestion']}"
+    if t == "duplicate_clarify_skipped":
+        return f"↩️ Already know '{event['question']}' -> {event.get('reused_answer', '')} - not asking again"
     if t == "evidence":
         # Show the actual finding, not just a counter.
         claim = event.get("claim", "").strip()
@@ -109,6 +112,28 @@ def main_page():
 
     worker = SqlAgWorker()
     busy = {"value": False}  # one investigation in flight at a time per user
+
+    # Local to this connection - each browser tab/user gets its OWN
+    # history, so follow-up resolution ("that year", "those sellers")
+    # never mixes context between different users. This is the actual
+    # fix for "the agent doesn't remember the previous turn": the CHAT
+    # UI was already persistent (turns never got cleared), but each
+    # turn started a brand-new InvestigationState with zero memory of
+    # earlier turns, so references like "that year" had nothing to
+    # resolve against and silently defaulted to whatever the planner
+    # picked on its own.
+    conversation_history: list = []
+
+    # Same idea, for clarify answers specifically. The controller
+    # already refuses to re-ask a question that's in
+    # state.resolved_ambiguities - but that guard only sees ONE turn's
+    # state. Without this, "which metric = worst" gets answered once,
+    # then asked again from scratch on the very next unrelated-looking
+    # question, because a fresh InvestigationState always starts with
+    # resolved_ambiguities = {}. Seeding every new turn's state with
+    # everything resolved so far makes the guard effective ACROSS
+    # turns, not just within one.
+    sticky_resolved_ambiguities: dict = {}
 
     ui.label("AI Data Analyst").classes("text-2xl font-bold")
     ui.label(
@@ -139,6 +164,10 @@ def main_page():
         with conversation_column:
             with ui.card().classes("w-full bg-blue-50"):
                 ui.label(question).classes("font-medium")
+                interpreted_label = ui.label("").classes(
+                    "text-xs text-gray-500 italic"
+                )
+                interpreted_label.visible = False
 
             with ui.card().classes("w-full") as turn_card:
                 turn_status = ui.label("Investigating\u2026").classes(
@@ -156,6 +185,7 @@ def main_page():
             "status": turn_status,
             "log": turn_log,
             "answer": turn_answer,
+            "interpreted": interpreted_label,
             "evidence": turn_evidence,
         }
 
@@ -210,7 +240,22 @@ def main_page():
 
         timer = ui.timer(0.25, drain)
 
-        state = InvestigationState(question=question)
+        # Resolve follow-up references ("that year", "those sellers")
+        # against this connection's OWN conversation history, before
+        # the planner ever sees the question. resolve_followup() makes
+        # a blocking LLM call, so it goes through run.io_bound like
+        # everything else that talks to a model.
+        resolved_question = await run.io_bound(
+            resolve_followup, question, list(conversation_history),
+        )
+        if resolved_question != question:
+            turn["interpreted"].set_text(f"Interpreted as: {resolved_question}")
+            turn["interpreted"].visible = True
+
+        state = InvestigationState(
+            question=resolved_question,
+            resolved_ambiguities=dict(sticky_resolved_ambiguities),
+        )
         budget = InvestigationBudget(max_queries=6, max_clarifications=2)
         investigation_id = session_store.create(question)
 
@@ -234,6 +279,14 @@ def main_page():
         drain()          # flush anything queued right before completion
         timer.active = False  # stop polling - this turn is done
 
+        # Carry forward anything resolved this turn (including whatever
+        # was seeded in) so the NEXT turn's fresh InvestigationState
+        # starts already knowing it, instead of re-asking.
+        if result.state is not None:
+            sticky_resolved_ambiguities.update(
+                getattr(result.state, "resolved_ambiguities", {}) or {}
+            )
+
         session_store.update(
             investigation_id,
             status=result.status,
@@ -248,6 +301,15 @@ def main_page():
         else:
             turn["status"].set_text("Stopped")
             turn["answer"].set_content(f"*Stopped: {result.reason}*")
+
+        # Record the ORIGINAL question (natural conversation transcript)
+        # so future turns' follow-up resolution has real history to
+        # work from - this is what makes the chat's memory actually
+        # persistent, not just its on-screen layout.
+        conversation_history.append({
+            "question": question,
+            "answer": result.answer or result.reason,
+        })
 
         _scroll_to_bottom()
 

@@ -150,8 +150,20 @@ def run_investigation(
         if not s.startswith("[already")
     }
     dup_strikes = 0
+    clarify_dup_strikes = 0
     steps = 0
-    _emit(on_event, "investigation_started", question=state.question)
+
+    # A resume calls run_investigation again with state that already
+    # has evidence/completed work. Emitting "investigation_started"
+    # every time makes one logical investigation look like several
+    # separate restarts in a step log. Only announce a genuinely fresh
+    # start.
+    if (
+        not state.evidence
+        and not state.completed_steps
+        and not (getattr(state, "resolved_ambiguities", None) or {})
+    ):
+        _emit(on_event, "investigation_started", question=state.question)
 
     while True:
         steps += 1
@@ -209,6 +221,41 @@ def run_investigation(
 
         # ---------------- CLARIFY ----------------
         if act == "clarify":
+            # Deterministic guard: never re-surface a question that has
+            # ALREADY been answered. This is the exact failure the
+            # planner's own prompt rule ("check resolved_ambiguities,
+            # don't ask again") is supposed to prevent - but a prompt
+            # rule is not enforcement. Observed in practice: the
+            # planner clarified on "which metric", got an answer, ran a
+            # real investigation with it, then clarified on the SAME
+            # question again mid-investigation. This check makes that
+            # impossible regardless of what the prompt says.
+            resolved = getattr(state, "resolved_ambiguities", {}) or {}
+            resolved_keys_norm = {_normalize(k) for k in resolved.keys()}
+            question_key = _normalize(action.clarification_question)
+
+            if question_key in resolved_keys_norm:
+                clarify_dup_strikes += 1
+                already_answered_key = next(
+                    k for k in resolved if _normalize(k) == question_key
+                )
+                _emit(
+                    on_event, "duplicate_clarify_skipped",
+                    question=action.clarification_question,
+                    reused_answer=resolved[already_answered_key],
+                )
+                if clarify_dup_strikes >= 2:
+                    # planner is stuck re-asking; stop trusting it and
+                    # force a synthesis from whatever evidence exists.
+                    return _terminate(state, synthesizer, "duplicate_clarify_loop", steps, on_event)
+                # Nudge with the answer it already has, no budget spent,
+                # no dialog shown to the user again.
+                state.completed_steps.append(
+                    f"[already answered] {action.clarification_question} "
+                    f"-> {resolved[already_answered_key]}"
+                )
+                continue
+
             if budget.clarifications_remaining <= 0:
                 # not allowed to interrupt again: fall back to evidence.
                 return _terminate(state, synthesizer, "clarify_budget", steps, on_event)
