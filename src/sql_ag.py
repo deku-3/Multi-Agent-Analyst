@@ -50,8 +50,12 @@ from src.vectorstore import olist_schema_store
 # Olist database
 from src.config import OLIST_DB_PATH
 
-# Hybrid RAG 
+# Hybrid RAG
 from src.hybrid_retriever import hybrid_retrieve
+
+# Shared semantic layer (same authoritative facts the planner uses -
+# prevents planner/worker semantic drift per the design doc's §24).
+from src.context_resolver import DATA_FACTS
 # ---------------------------------------------------------------
 # LANGFUSE
 # ---------------------------------------------------------------
@@ -412,6 +416,10 @@ def write_query(state: AgentState):
             ],
         }
 
+    data_facts_text = "\n".join(
+        f"- {fact}" for fact in DATA_FACTS
+    )
+
     system = f"""
 You are a SQL expert working with a SQLite database containing
 Brazilian Olist e-commerce data.
@@ -486,6 +494,39 @@ IMPORTANT OLIST RULES:
 17. Return exactly the columns the user asks for.
 
 18. Use SQLite-compatible SQL.
+
+19. COMPARISON QUESTIONS ("compare X and Y", "X vs Y", "X versus Y",
+    "difference between X and Y", "last quarter vs previous quarter"):
+    the result MUST have one row per thing being compared, so the
+    values can be told apart. Never OR multiple period/segment ranges
+    into a single WHERE clause - that collapses them into ONE merged
+    aggregate and destroys the comparison. Instead, label each row
+    with a CASE expression and GROUP BY that label, e.g.:
+
+        SELECT
+          CASE
+            WHEN order_purchase_timestamp BETWEEN '2018-04-01' AND '2018-06-30'
+              THEN 'Q2 2018'
+            WHEN order_purchase_timestamp BETWEEN '2018-07-01' AND '2018-09-30'
+              THEN 'Q3 2018'
+          END AS period,
+          SUM(oi.price) AS gmv
+        FROM orders o JOIN order_items oi ON o.order_id = oi.order_id
+        WHERE o.order_purchase_timestamp BETWEEN '2018-04-01' AND '2018-09-30'
+        GROUP BY period;
+
+20. SQLite's strftime() has NO '%q' quarter token. It silently returns
+    NULL if you use it - never write strftime('%q', ...). To compute a
+    quarter, use:
+
+        ((CAST(strftime('%m', date_col) AS INTEGER) + 2) / 3)
+
+21. Common table expressions (WITH ... AS (...) SELECT ...) are
+    allowed and encouraged for multi-step logic such as computing a
+    threshold/quartile and then filtering by it in the same query.
+
+KNOWN DATA FACTS (verified against this database - respect these):
+{data_facts_text}
 
 USER QUESTION:
 ==================================================
@@ -563,19 +604,46 @@ FORBIDDEN = (
 
 def is_safe_select(query: str) -> bool:
     """
-    Basic forbidden keyword gate.
+    Read-only query gate.
 
-    Database is also opened read-only, which is the stronger
-    physical protection.
+    Accepts SELECT and WITH ... SELECT (CTEs) - CTEs are the natural
+    shape for quartile/threshold-discovery and multi-step analytical
+    queries, and must not be blackballed.
+
+    Two bugs fixed here vs. the original:
+    1. The original required the query to literally start with
+       "select", which rejected every valid CTE ("WITH x AS (...)
+       SELECT ...") as "unsafe" even though it is a pure read.
+    2. The original used a plain substring check ("create" in lowered),
+       which also flags a query that merely FILTERS on the literal
+       status value 'created' (a real Olist order_status value) since
+       "create" is a substring of "created". Word-boundary matching
+       fixes this false positive.
+
+    Database is also opened read-only, which is the stronger physical
+    protection; this is a defense-in-depth gate, not the only one.
     """
 
-    lowered = query.lower().strip()
+    stripped = query.strip()
 
-    if not lowered.startswith("select"):
+    # Reject stacked statements (defense against "...; DROP ...").
+    # A single trailing semicolon is fine; anything before it is not.
+    body = stripped[:-1] if stripped.endswith(";") else stripped
+    if ";" in body:
+        return False
+
+    lowered = body.lower()
+
+    if not (lowered.startswith("select") or lowered.startswith("with")):
+        return False
+
+    # A WITH query must still contain a SELECT somewhere (the final
+    # statement of the CTE chain) - otherwise it isn't a read at all.
+    if lowered.startswith("with") and "select" not in lowered:
         return False
 
     return not any(
-        word in lowered
+        re.search(rf"\b{word}\b", lowered)
         for word in FORBIDDEN
     )
 
@@ -635,17 +703,26 @@ def extract_literal_filters(query: str):
 
 def _real_identifiers():
     """
-    Get actual Olist table and column names.
+    Get actual Olist table names and PER-TABLE column names.
 
-    These identifiers are used to whitelist values extracted
-    from model-generated SQL before they are interpolated into
-    the probing query.
+    Returns (tables: set[str], columns_by_table: dict[str, set[str]]).
+
+    IMPORTANT: SQLite has a legacy double-quoted-identifier
+    misfeature - if a double-quoted "column" does not exist on a
+    given table, SQLite silently treats it as a STRING LITERAL
+    instead of raising an error. This previously made probe_values()
+    report a fake "sample value" (the column name itself, e.g.
+    ['order_status']) when probing a column against a table that
+    doesn't actually have it - order_status only exists on `orders`,
+    not `order_items`, but the old global column set couldn't tell
+    the two apart. Tracking columns per-table lets probe_values()
+    skip those combinations before they ever reach SQL.
     """
 
     con = get_db()
 
     tables = set()
-    columns = set()
+    columns_by_table: dict[str, set] = {}
 
     try:
         rows = con.execute(
@@ -665,13 +742,14 @@ def _real_identifiers():
                 f'PRAGMA table_info("{table_name}")'
             ).fetchall()
 
-            for row in table_columns:
-                columns.add(row[1])
+            columns_by_table[table_name] = {
+                row[1] for row in table_columns
+            }
 
     finally:
         con.close()
 
-    return tables, columns
+    return tables, columns_by_table
 
 
 # ---------------------------------------------------------------
@@ -690,7 +768,7 @@ def probe_values(
     mismatches in categorical values.
     """
 
-    real_tables, real_columns = _real_identifiers()
+    real_tables, columns_by_table = _real_identifiers()
 
     referenced_tables = [
         table
@@ -700,12 +778,6 @@ def probe_values(
             flags=re.IGNORECASE,
         )
         if table in real_tables
-    ]
-
-    filters = [
-        (column, value)
-        for column, value in filters
-        if column in real_columns
     ]
 
     evidence = []
@@ -718,6 +790,14 @@ def probe_values(
         )
 
         for table in set(referenced_tables):
+
+            # Skip a column that does not actually exist on this
+            # table. Without this check, SQLite's double-quoted
+            # string-literal fallback would silently return the
+            # column NAME itself as a fake "sample value" instead of
+            # erroring - see _real_identifiers() docstring.
+            if column not in columns_by_table.get(table, set()):
+                continue
 
             try:
                 con = get_db()
@@ -783,6 +863,49 @@ def probe_values(
 # ---------------------------------------------------------------
 # Execute query
 # ---------------------------------------------------------------
+
+# ---------------------------------------------------------------
+# Comparison-shape guard
+# ---------------------------------------------------------------
+#
+# A "compare X vs Y" question answered by a query that collapses both
+# X and Y into one WHERE clause (joined with OR) returns exactly ONE
+# row - a single merged aggregate with no way to tell X and Y apart.
+# That is a silent wrong answer, not an error, so nothing else catches
+# it. This is a deterministic, no-LLM-call check: cheaper and more
+# reliable than hoping the prompt rule alone holds.
+
+COMPARISON_WORDS = (
+    "compare",
+    " vs ",
+    " vs.",
+    "versus",
+    "compared to",
+    "difference between",
+)
+
+
+def _looks_like_comparison(question: str) -> bool:
+    q = f" {question.lower()} "
+    return any(word in q for word in COMPARISON_WORDS)
+
+
+def _row_count(result_str: str) -> int:
+    """
+    Count rows in the "[(...), (...)]" repr produced by run_readonly.
+    Falls back to 0 on anything unparsable (empty result, truncated
+    output, etc.) so the guard never raises.
+    """
+    import ast
+
+    text = result_str.split("\n...(")[0]  # strip any truncation/cap note
+
+    try:
+        parsed = ast.literal_eval(text)
+        return len(parsed) if isinstance(parsed, list) else 1
+    except Exception:
+        return 0
+
 
 def execute_query(state: AgentState):
     """
@@ -875,6 +998,41 @@ def execute_query(state: AgentState):
                             )
                         ],
                     }
+
+        # ---------------------------------------------------
+        # Comparison collapsed to a single row
+        # ---------------------------------------------------
+
+        if (
+            _looks_like_comparison(state["question"])
+            and _row_count(result) <= 1
+            and state["attempts"] < MAX_ATTEMPTS
+        ):
+
+            print(
+                "--- Suspicious: comparison question but "
+                "result has only 1 row (periods/segments were "
+                "likely merged with OR instead of GROUP BY) ---"
+            )
+
+            return {
+                "result": result,
+                "error": "single_row_comparison",
+                "messages": [
+                    (
+                        "user",
+                        "This question asks for a COMPARISON, but "
+                        "your query returned only ONE row - the "
+                        "things being compared were merged into a "
+                        "single aggregate (e.g. two period ranges "
+                        "joined with OR in one WHERE clause). "
+                        "Rewrite the query so each thing being "
+                        "compared is its own row: use a CASE "
+                        "expression to label each period/segment "
+                        "and GROUP BY that label.",
+                    )
+                ],
+            }
 
         return {
             "result": result,
@@ -1069,6 +1227,11 @@ Instructions:
 - If the result is empty, say that no matching data was found.
 - If the result was truncated, summarize the available output.
 - Do not invent information not present in the result.
+- If the question asked for a COMPARISON but the result has only ONE
+  row (the periods/segments could not be separated), do NOT label
+  that single merged value as belonging to just one of the periods.
+  Instead say plainly that the query returned a combined total and
+  the individual periods could not be distinguished.
 """
 
     response = llm.invoke(
@@ -1096,7 +1259,7 @@ def route_after_execute(state: AgentState):
     if error == "no":
         return "validate"
 
-    if error == "empty_suspicious":
+    if error in ("empty_suspicious", "single_row_comparison"):
 
         if state["attempts"] < MAX_ATTEMPTS:
             return "write_query"
