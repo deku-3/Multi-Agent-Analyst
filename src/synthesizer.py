@@ -51,6 +51,13 @@ RULES:
 5. If the evidence is insufficient to fully answer, say what is known and
    what remains unknown. Do not pad.
 
+6. If an evidence item's claim contains a long enumerated list (dozens or
+   hundreds of raw IDs), do NOT reproduce that list in the final answer.
+   State the count and a handful of representative examples instead - the
+   full list is already recorded in the evidence and available on demand.
+   The final answer is what the user reads first; it must never be a wall
+   of raw IDs.
+
 Answer directly and concretely.
 """
 

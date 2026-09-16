@@ -86,9 +86,17 @@ def _format_event(event: dict) -> "str | None":
     if t == "duplicate_clarify_skipped":
         return f"↩️ Already know '{event['question']}' -> {event.get('reused_answer', '')} - not asking again"
     if t == "evidence":
-        # Show the actual finding, not just a counter.
+        # Show the actual finding, not just a counter. Capped so a
+        # worker answer that lists many raw IDs never floods the live
+        # log - this is a display-layer backstop; the FULL claim is
+        # still recorded untouched in state.evidence for the evidence
+        # panel/audit trail, only what's shown here is shortened.
         claim = event.get("claim", "").strip()
-        return f"✅ {claim}" if claim else "✅ Evidence recorded"
+        if not claim:
+            return "✅ Evidence recorded"
+        if len(claim) > 220:
+            claim = claim[:220].rsplit(" ", 1)[0] + "\u2026 (see Evidence below)"
+        return f"✅ {claim}"
     if t == "clarify":
         return f"❓ {event['question']}"
     if t == "synthesizing":

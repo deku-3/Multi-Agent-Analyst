@@ -1227,6 +1227,12 @@ Instructions:
 - If the result is empty, say that no matching data was found.
 - If the result was truncated, summarize the available output.
 - Do not invent information not present in the result.
+- IF THE RESULT HAS MANY ROWS (roughly more than 10 - e.g. a list of
+  seller IDs, product IDs, or similar entities): do NOT enumerate every
+  row. State the COUNT and give at most 5-10 representative examples,
+  then say the rest are available in the evidence detail. Enumerating
+  dozens or hundreds of raw IDs is never a useful answer - the count
+  and a sample answer the question just as well.
 - If the question asked for a COMPARISON but the result has only ONE
   row (the periods/segments could not be separated), do NOT label
   that single merged value as belonging to just one of the periods.

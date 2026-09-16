@@ -381,6 +381,24 @@ A subquestion the worker cannot execute deterministically is not
 acceptable.
 
 ==================================================
+RECOGNIZING A COMPLETE ANSWER (do not re-check what you already have)
+==================================================
+
+A common failure mode: after an investigate action returns a list of
+entities that directly answers "which X meet criterion Y" (e.g. "which
+sellers fall in the lowest rating quartile", "which categories exceed
+threshold Z"), that question IS FULLY ANSWERED. The list itself - not
+a re-run, not a rephrased re-check, not a "let me confirm" - is the
+answer.
+
+Do NOT investigate the same filter/enumeration question again, worded
+the same or differently, once you have its result. If your last
+investigation returned a list answering "which X are worst/best/above/
+below <threshold>", your NEXT action must be SYNTHESIZE (unless you
+still need a genuinely DIFFERENT piece of information - a different
+metric, a different dimension - not a re-check of the same one).
+
+==================================================
 STOPPING
 ==================================================
 
