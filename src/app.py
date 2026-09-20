@@ -60,7 +60,6 @@ HORIZONTAL SCALING (multiple processes/machines)
     sticky sessions at the load balancer - true of any websocket app.
 """
 
-import asyncio
 import queue
 
 from nicegui import run, ui
@@ -453,18 +452,18 @@ def main_page():
             run_button.enable()
             spinner.visible = False
 
-    def use_suggestion(text: str) -> None:
-        # Deliberately a SYNC function that schedules the coroutine via
-        # asyncio.create_task, rather than an async function called
-        # from inside a plain lambda. A sync lambda that merely calls
-        # an async function and discards the result would create a
-        # coroutine object that is never awaited - it silently does
-        # nothing (Python would only warn, not error). create_task()
-        # is the correct, unambiguous way to fire-and-forget a
-        # coroutine from synchronous code already running in an event
-        # loop, which this handler is.
+    async def use_suggestion(text: str) -> None:
+        # Deliberately bound via a lambda that RETURNS this coroutine
+        # (see the binding below), not via asyncio.create_task(). A
+        # spawned Task loses NiceGUI's slot-tracking context entirely
+        # - ui.timer/ui.* calls inside it raise "the current slot
+        # cannot be determined... this may happen if you try to create
+        # UI from a background task." NiceGUI's own on_click dispatcher
+        # correctly awaits a returned coroutine IN-CONTEXT, which is
+        # why this pattern (and the direct async on_click bindings
+        # elsewhere in this file) works and create_task() does not.
         question_input.value = text
-        asyncio.create_task(start_investigation())
+        await start_investigation()
 
     with suggestions_row:
         ui.label("Try:").classes("status-line self-center")
