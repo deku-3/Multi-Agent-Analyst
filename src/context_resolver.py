@@ -58,6 +58,13 @@ SALES_DATE = "orders.order_purchase_timestamp"
 # facts the planner (and eventually the SQL Worker) must respect so it does
 # not silently produce inconsistent or incomplete numbers.
 DATA_FACTS = [
+    # Terminology synonym: "customer rating(s)", "rating(s)", "review
+    # score(s)" all refer to the SAME column - avoid burning a query
+    # discovering this by trial and error.
+    "'Customer rating(s)', 'rating(s)', and 'review score(s)' all refer "
+    "to the SAME column: order_reviews.review_score. There is no "
+    "separate 'rating' column - do not query for one.",
+
     # Orphan orders: 775 orders have NO rows in order_items (mostly
     # unavailable/canceled). This makes the order denominator ambiguous.
     "775 orders have no order_items. Sales/GMV/AOV counts use orders "
